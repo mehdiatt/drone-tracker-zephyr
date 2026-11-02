@@ -1,0 +1,9 @@
+#include <zephyr/dt-bindings/pinctrl/stm32-pinctrl.h>
+
+/ {
+	aliases {
+		//led0 = &blue_led_1; 	// This is LED1 as labeled STM32WL55JC board's 
+		led0 = &green_led_2; 	// This is LED2 as labeled STM32WL55JC board's 
+		//led0 = &red_led_3; 	// This is LED3 as labeled STM32WL55JC board's 
+	};
+};
