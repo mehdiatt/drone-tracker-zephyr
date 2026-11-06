@@ -20,7 +20,7 @@
 &i2c2 {
 	pinctrl-0 = <&i2c2_scl_pa12 &i2c2_sda_pa11>;
 	pinctrl-names = "default";
-	clock-frequency = <400000>;   /* Fast mode, 400 kHz */
+	clock-frequency = <100000>;   
 	status = "okay";
 };
 
