@@ -1,33 +1,73 @@
+/*
+ * Test I2C : vérifie que le MPU6050 et le Si7021 répondent sur I2C2.
+ * Relit l'identité des deux capteurs toutes les 2 s.
+ */
+
 #include <zephyr/kernel.h>
-#include <zephyr/drivers/gpio.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/i2c.h>
 #include <zephyr/sys/printk.h>
 
-// LED from the board devicetree (standard alias: led0 for LED1)
-static const struct gpio_dt_spec led_blinky = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+/* Adresses I2C (7 bits) */
+#define MPU6050_ADDR          0x68
+#define SI7021_ADDR           0x40
+
+/* MPU6050 : registre d'identité */
+#define MPU6050_REG_WHO_AM_I  0x75
+#define MPU6050_WHO_AM_I_VAL  0x68
+
+/* Si7021 : commande de lecture du registre utilisateur 1 */
+#define SI7021_CMD_READ_USER  0xE7
+#define SI7021_USER_RESET_VAL 0x3A
+
+static const struct device *const i2c = DEVICE_DT_GET(DT_NODELABEL(i2c2));
+
+static void check_mpu6050(void)
+{
+	uint8_t who = 0;
+	int ret = i2c_reg_read_byte(i2c, MPU6050_ADDR, MPU6050_REG_WHO_AM_I, &who);
+
+	if (ret != 0) {
+		printk("MPU6050 : pas de reponse a 0x%02X (err %d)\n", MPU6050_ADDR, ret);
+	} else if (who == MPU6050_WHO_AM_I_VAL) {
+		printk("MPU6050 : OK, WHO_AM_I = 0x%02X\n", who);
+	} else {
+		printk("MPU6050 : repond, mais WHO_AM_I = 0x%02X (attendu 0x%02X)\n",
+		       who, MPU6050_WHO_AM_I_VAL);
+	}
+}
+
+static void check_si7021(void)
+{
+	uint8_t cmd = SI7021_CMD_READ_USER;
+	uint8_t user = 0;
+	int ret = i2c_write_read(i2c, SI7021_ADDR, &cmd, 1, &user, 1);
+
+	if (ret != 0) {
+		printk("Si7021  : pas de reponse a 0x%02X (err %d)\n", SI7021_ADDR, ret);
+	} else if (user == SI7021_USER_RESET_VAL) {
+		printk("Si7021  : OK, registre utilisateur = 0x%02X\n", user);
+	} else {
+		printk("Si7021  : repond, registre utilisateur = 0x%02X (0x%02X apres reset)\n",
+		       user, SI7021_USER_RESET_VAL);
+	}
+}
 
 int main(void)
 {
-    printk("Embedded Platforms and Communications for IoT\n");
-    printk("        ETSIST - UPM - MUIoT 2026-2027       \n\n");
-	
-    printk("    Board LED toggle (single thread: main)   \n");
+	if (!device_is_ready(i2c)) {
+		printk("Erreur : I2C2 n'est pas pret\n");
+		return 0;
+	}
 
-    // Ensure the GPIO device is ready
-    if (!device_is_ready(led_blinky.port)) {
-        printk("Error: LED device not ready\n");
-        return 0; 
-    }
+	printk("\n=== Test I2C2 (D15 = SCL, D14 = SDA) ===\n");
 
-    // Configure as output and start LOW (off)
-    if (gpio_pin_configure_dt(&led_blinky, GPIO_OUTPUT_INACTIVE) < 0) {
-        printk("Error: configuring led_blinky\n");
-        return 0;
-    }
+	while (1) {
+		check_mpu6050();
+		check_si7021();
+		printk("---\n");
+		k_sleep(K_SECONDS(2));
+	}
 
-    // Toggle loop: change state every 1 second
-    while (1) {
-        printk("Toggle!!\n");
-        gpio_pin_toggle_dt(&led_blinky);
-        k_sleep(K_SECONDS(3));
-    }
+	return 0;
 }
