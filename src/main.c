@@ -15,7 +15,7 @@ int main(void)
     // Ensure the GPIO device is ready
     if (!device_is_ready(led_blinky.port)) {
         printk("Error: LED device not ready\n");
-        return 0;
+        return 0; 
     }
 
     // Configure as output and start LOW (off)
