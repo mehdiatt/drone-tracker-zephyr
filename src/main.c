@@ -44,6 +44,21 @@ int main(void)
 	}
 	printk("\n=== MPU6050 configure : +-8 g, +-500 deg/s, 50 Hz, DLPF 20 Hz ===\n");
 
+	printk("Calibration du gyroscope : ne bougez pas la carte (2 s)...\n");
+	ret = mpu6050_calibrate_gyro(i2c, 100);
+	if (ret != 0) {
+		printk("Erreur : calibration du gyroscope (err %d)\n", ret);
+		return 0;
+	}
+
+	float bx, by, bz;
+
+	mpu6050_get_gyro_bias(&bx, &by, &bz);
+	printk("Biais gyro deg/s : bx="); print_2dec(bx);
+	printk(" by=");                  print_2dec(by);
+	printk(" bz=");                  print_2dec(bz);
+	printk("\n\n");
+
 	while (1) {
 		ret = mpu6050_read(i2c, &d);
 		if (ret != 0) {

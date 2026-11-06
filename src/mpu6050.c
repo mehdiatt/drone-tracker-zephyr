@@ -45,6 +45,27 @@
 
 #define STANDARD_GRAVITY        9.80665f
 
+/*
+ * Calibration de l'accéléromètre (mesurée à la main, méthode à deux positions).
+ * Pour chaque axe : mesure à +1 g (m_plus) et à -1 g (m_moins), carte immobile.
+ *   offset = (m_plus + m_moins) / 2
+ *   gain   = 9.80665 / ((m_plus - m_moins) / 2)
+ *   valeur corrigée = (mesure - offset) * gain
+ *
+ * Axe Z mesuré le 06/11/2026 : m_plus = +8.22, m_moins = -11.80 m/s²
+ *   -> offset = -1.79 m/s², gain = 9.80665 / 10.01 = 0.980
+ * Axes X et Y : pas encore mesurés, corrections neutres.
+ */
+#define ACC_X_OFFSET            0.0f
+#define ACC_X_GAIN              1.0f
+#define ACC_Y_OFFSET            0.0f
+#define ACC_Y_GAIN              1.0f
+#define ACC_Z_OFFSET            (-1.79f)
+#define ACC_Z_GAIN              0.980f
+
+/* Biais du gyroscope, mesuré au démarrage par mpu6050_calibrate_gyro() */
+static float gyro_bias_x, gyro_bias_y, gyro_bias_z;
+
 /* Assemble deux octets (poids fort en premier) en entier signé 16 bits */
 static inline int16_t be16_to_s16(const uint8_t *p)
 {
@@ -163,7 +184,8 @@ int mpu6050_init(const struct device *i2c)
 	return 0;
 }
 
-int mpu6050_read(const struct device *i2c, struct mpu6050_data *out)
+/* Lecture convertie en unités physiques, SANS correction de calibration */
+static int read_uncalibrated(const struct device *i2c, struct mpu6050_data *out)
 {
 	uint8_t buf[14];
 	int ret;
@@ -186,6 +208,62 @@ int mpu6050_read(const struct device *i2c, struct mpu6050_data *out)
 	out->gx = be16_to_s16(&buf[8])  / GYRO_SENS_LSB_PER_DPS;
 	out->gy = be16_to_s16(&buf[10]) / GYRO_SENS_LSB_PER_DPS;
 	out->gz = be16_to_s16(&buf[12]) / GYRO_SENS_LSB_PER_DPS;
+
+	return 0;
+}
+
+int mpu6050_calibrate_gyro(const struct device *i2c, int samples)
+{
+	struct mpu6050_data d;
+	float sx = 0.0f, sy = 0.0f, sz = 0.0f;
+	int ret;
+
+	if (samples <= 0) {
+		return -EINVAL;
+	}
+
+	for (int i = 0; i < samples; i++) {
+		ret = read_uncalibrated(i2c, &d);
+		if (ret != 0) {
+			return ret;
+		}
+		sx += d.gx;
+		sy += d.gy;
+		sz += d.gz;
+		k_msleep(20);   /* une nouvelle mesure toutes les 20 ms (50 Hz) */
+	}
+
+	gyro_bias_x = sx / samples;
+	gyro_bias_y = sy / samples;
+	gyro_bias_z = sz / samples;
+
+	return 0;
+}
+
+void mpu6050_get_gyro_bias(float *bx, float *by, float *bz)
+{
+	*bx = gyro_bias_x;
+	*by = gyro_bias_y;
+	*bz = gyro_bias_z;
+}
+
+int mpu6050_read(const struct device *i2c, struct mpu6050_data *out)
+{
+	int ret = read_uncalibrated(i2c, out);
+
+	if (ret != 0) {
+		return ret;
+	}
+
+	/* Accéléromètre : correction d'offset et de gain (calibration deux positions) */
+	out->ax = (out->ax - ACC_X_OFFSET) * ACC_X_GAIN;
+	out->ay = (out->ay - ACC_Y_OFFSET) * ACC_Y_GAIN;
+	out->az = (out->az - ACC_Z_OFFSET) * ACC_Z_GAIN;
+
+	/* Gyroscope : soustraction du biais mesuré au démarrage */
+	out->gx -= gyro_bias_x;
+	out->gy -= gyro_bias_y;
+	out->gz -= gyro_bias_z;
 
 	return 0;
 }

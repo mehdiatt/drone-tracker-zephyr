@@ -17,7 +17,20 @@ struct mpu6050_data {
 /* Vérifie l'identité, réveille et configure le capteur. Retourne 0 si OK. */
 int mpu6050_init(const struct device *i2c);
 
-/* Lit les 6 axes en une seule transaction et les convertit. Retourne 0 si OK. */
+/*
+ * Mesure le biais du gyroscope : moyenne de `samples` lectures, une toutes
+ * les 20 ms. La carte doit rester IMMOBILE pendant la mesure.
+ * Retourne 0 si OK.
+ */
+int mpu6050_calibrate_gyro(const struct device *i2c, int samples);
+
+/* Renvoie le biais du gyroscope mesuré par mpu6050_calibrate_gyro(), en °/s */
+void mpu6050_get_gyro_bias(float *bx, float *by, float *bz);
+
+/*
+ * Lit les 6 axes en une seule transaction, les convertit en unités physiques
+ * et applique les corrections de calibration. Retourne 0 si OK.
+ */
 int mpu6050_read(const struct device *i2c, struct mpu6050_data *out);
 
 #endif /* MPU6050_H */
