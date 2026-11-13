@@ -1,33 +1,83 @@
+/*
+ * Test MPU6050 : configuration, puis affichage des mesures converties
+ * toutes les 500 ms.
+ */
+
+#include <math.h>
 #include <zephyr/kernel.h>
-#include <zephyr/drivers/gpio.h>
+#include <zephyr/device.h>
 #include <zephyr/sys/printk.h>
 
-// LED from the board devicetree (standard alias: led0 for LED1)
-static const struct gpio_dt_spec led_blinky = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+#include "mpu6050.h"
+
+static const struct device *const i2c = DEVICE_DT_GET(DT_NODELABEL(i2c2));
+
+/*
+ * printk ne gère pas les flottants : on affiche la valeur en virgule fixe,
+ * avec signe et deux décimales (ex. +009.81).
+ */
+static void print_2dec(float v)
+{
+	int x = (int)(v * 100.0f + (v >= 0.0f ? 0.5f : -0.5f));
+	char sign = (x < 0) ? '-' : '+';
+
+	if (x < 0) {
+		x = -x;
+	}
+	printk("%c%03d.%02d", sign, x / 100, x % 100);
+}
 
 int main(void)
 {
-    printk("Embedded Platforms and Communications for IoT\n");
-    printk("        ETSIST - UPM - MUIoT 2026-2027       \n\n");
-	
-    printk("    Board LED toggle (single thread: main)   \n");
+	struct mpu6050_data d;
+	int ret;
 
-    // Ensure the GPIO device is ready
-    if (!device_is_ready(led_blinky.port)) {
-        printk("Error: LED device not ready\n");
-        return 0;
-    }
+	if (!device_is_ready(i2c)) {
+		printk("Erreur : I2C2 n'est pas pret\n");
+		return 0;
+	}
 
-    // Configure as output and start LOW (off)
-    if (gpio_pin_configure_dt(&led_blinky, GPIO_OUTPUT_INACTIVE) < 0) {
-        printk("Error: configuring led_blinky\n");
-        return 0;
-    }
+	ret = mpu6050_init(i2c);
+	if (ret != 0) {
+		printk("Erreur : initialisation MPU6050 (err %d)\n", ret);
+		return 0;
+	}
+	printk("\n=== MPU6050 configure : +-8 g, +-500 deg/s, 50 Hz, DLPF 20 Hz ===\n");
 
-    // Toggle loop: change state every 1 second
-    while (1) {
-        printk("Toggle!!\n");
-        gpio_pin_toggle_dt(&led_blinky);
-        k_sleep(K_SECONDS(3));
-    }
+	printk("Calibration du gyroscope : ne bougez pas la carte (2 s)...\n");
+	ret = mpu6050_calibrate_gyro(i2c, 100);
+	if (ret != 0) {
+		printk("Erreur : calibration du gyroscope (err %d)\n", ret);
+		return 0;
+	}
+
+	float bx, by, bz;
+
+	mpu6050_get_gyro_bias(&bx, &by, &bz);
+	printk("Biais gyro deg/s : bx="); print_2dec(bx);
+	printk(" by=");                  print_2dec(by);
+	printk(" bz=");                  print_2dec(bz);
+	printk("\n\n");
+
+	while (1) {
+		ret = mpu6050_read(i2c, &d);
+		if (ret != 0) {
+			printk("Erreur de lecture (err %d)\n", ret);
+		} else {
+			float a_norm = sqrtf(d.ax * d.ax + d.ay * d.ay + d.az * d.az);
+
+			printk("ACC m/s2: ax=");  print_2dec(d.ax);
+			printk(" ay=");           print_2dec(d.ay);
+			printk(" az=");           print_2dec(d.az);
+			printk(" |a|=");          print_2dec(a_norm);
+			printk("\nGYR deg/s: gx="); print_2dec(d.gx);
+			printk(" gy=");           print_2dec(d.gy);
+			printk(" gz=");           print_2dec(d.gz);
+			printk("   T=");          print_2dec(d.temp_c);
+			printk(" C\n---\n");
+		}
+		k_sleep(K_MSEC(500));
+	}
+
+	return 0;
 }
