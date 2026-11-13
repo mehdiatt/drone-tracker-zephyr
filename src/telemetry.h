@@ -41,8 +41,8 @@ struct imu_telemetry {
 	float ax, ay, az;          /* m/s², calibrés */
 	float gx, gy, gz;          /* °/s, biais retiré */
 	float roll, pitch, yaw;    /* degrés, intégration du gyroscope */
-	float x, y, z;             /* m, position locale (à venir) */
-	float vx, vy, vz;          /* m/s, vitesse locale (à venir) */
+	float x, y, z;             /* m, position locale (intégration, dérive) */
+	float vx, vy, vz;          /* m/s, vitesse locale */
 	bool calibrated;           /* biais du gyroscope mesuré et valide */
 	uint32_t samples;          /* nombre de mesures réussies */
 	uint32_t read_errors;      /* nombre de lectures en échec */
@@ -86,6 +86,9 @@ void telemetry_set_env(const struct env_telemetry *env);
 void telemetry_set_gps(const struct gps_telemetry *gps);
 void telemetry_set_light(const struct light_telemetry *light);
 void telemetry_set_state(enum tracker_state state);
+
+/* Lecture rapide des flags combinés seulement (sans copier toute la structure) */
+uint16_t telemetry_get_flags(void);
 
 /* Lecture : copie complète et cohérente, flags combinés */
 void telemetry_snapshot(struct telemetry *out);

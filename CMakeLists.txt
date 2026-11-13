@@ -13,6 +13,8 @@ target_sources(app PRIVATE
     src/si7021.c
     src/telemetry.c
     src/imu.c
+    src/state.c
+    src/env.c
 )
 
 target_include_directories(app PRIVATE)

@@ -15,6 +15,14 @@
  * de petits angles. Limites (à discuter dans le rapport) : dérive accumulée
  * et absence de référence absolue de cap pour le yaw.
  *
+ * Vitesse et position locales : l'accélération est ramenée dans le repère
+ * local avec les angles estimés, g est retirée, puis on intègre deux fois
+ * (Euler). La dérive est inévitable (flag 0x0040 toujours actif) ; deux
+ * protections la limitent : une zone morte sur les petites accélérations,
+ * et la remise à zéro de la vitesse quand la carte est immobile (ZUPT).
+ *
+ * État (IDLE / FLYING / PROBLEM) : décidé à chaque mesure par state.c.
+ *
  * Robustesse (GR3) : si le MPU6050 ne répond plus ou a redémarré, le flag
  * 0x0001 est activé, les dernières valeurs valides sont conservées, et le
  * capteur est réinitialisé automatiquement toutes les secondes.
@@ -22,6 +30,7 @@
 
 #include "imu.h"
 #include "mpu6050.h"
+#include "state.h"
 #include "telemetry.h"
 
 #include <errno.h>
@@ -82,6 +91,18 @@
 #define GYRO_RESIDUAL_BIAS_DPS  0.1f
 #define YAW_DRIFT_BUDGET_DEG    5.0f
 
+/*
+ * Zone morte sur l'accélération linéaire. Au repos, |a| fluctue d'environ
+ * ±0,1 m/s² : en dessous de 0,2 m/s², on considère qu'il n'y a pas
+ * d'accélération réelle, sinon ce bruit, intégré deux fois, fait dériver
+ * la position même carte posée.
+ */
+#define ACC_DEADBAND            0.2f
+
+/* Bornes des champs de la trame SIMU (sIII.dd et sIIII.dd) */
+#define MAX_SPEED               999.99f
+#define MAX_POSITION            9999.99f
+
 /* Garde-fou contre le blocage de cardan (pitch proche de ±90°) */
 #define MIN_COS_PITCH           0.1f
 
@@ -100,7 +121,8 @@ static const struct device *imu_i2c;
 
 struct calib_state {
 	int count;
-	float sum[3];
+	float sum[3];              /* gyroscope */
+	float asum[3];             /* accéléromètre */
 	float min[3], max[3];
 	bool moved;
 };
@@ -111,6 +133,7 @@ static void calib_reset(struct calib_state *c)
 	c->moved = false;
 	for (int i = 0; i < 3; i++) {
 		c->sum[i] = 0.0f;
+		c->asum[i] = 0.0f;
 		c->min[i] = INFINITY;
 		c->max[i] = -INFINITY;
 	}
@@ -120,6 +143,7 @@ static void calib_reset(struct calib_state *c)
 static bool calib_add(struct calib_state *c, const struct mpu6050_data *d)
 {
 	const float g[3] = { d->gx, d->gy, d->gz };
+	const float a[3] = { d->ax, d->ay, d->az };
 	float a_norm = sqrtf(d->ax * d->ax + d->ay * d->ay + d->az * d->az);
 
 	if (fabsf(a_norm - STANDARD_GRAVITY) > CALIB_ACC_TOLERANCE) {
@@ -128,6 +152,7 @@ static bool calib_add(struct calib_state *c, const struct mpu6050_data *d)
 
 	for (int i = 0; i < 3; i++) {
 		c->sum[i] += g[i];
+		c->asum[i] += a[i];
 		c->min[i] = fminf(c->min[i], g[i]);
 		c->max[i] = fmaxf(c->max[i], g[i]);
 		if (c->max[i] - c->min[i] > CALIB_GYRO_SPREAD_DPS) {
@@ -187,6 +212,102 @@ static void attitude_step(struct imu_telemetry *s, const struct mpu6050_data *d,
 	s->yaw = wrap_180(s->yaw + yaw_dot * dt * RAD2DEG);
 }
 
+/* ---------- Vitesse et position ---------- */
+
+/*
+ * Alignement initial, mesuré pendant la calibration. SR4 suppose l'orientation
+ * initiale nulle (carte à plat) : la moyenne m de l'accélération au repos
+ * devrait donc valoir (0, 0, g). L'écart restant (offsets des axes X/Y non
+ * calibrés, carte pas tout à fait horizontale) est retiré dans le repère du
+ * capteur, et g_ref = |m| sert de gravité de référence (absorbe l'erreur
+ * d'échelle). Sans cela, un offset de 0,5 m/s² sur Y ferait dériver la
+ * position de 0,25 x t² mètres.
+ */
+static float acc_align[3];
+static float g_ref = STANDARD_GRAVITY;
+
+static float clampf(float v, float lim)
+{
+	return fmaxf(-lim, fminf(lim, v));
+}
+
+static float deadband(float v)
+{
+	return (fabsf(v) < ACC_DEADBAND) ? 0.0f : v;
+}
+
+/*
+ * Matrice de rotation capteur -> repère local, convention Z-Y-X
+ * (R = Rz(yaw) Ry(pitch) Rx(roll)), cohérente avec attitude_step().
+ * Au repos à plat, l'accéléromètre mesure +g sur Z : on retire g sur Z local.
+ */
+static void motion_step(struct imu_telemetry *s, const struct mpu6050_data *d,
+			float dt, bool still)
+{
+	const float bx = d->ax - acc_align[0];
+	const float by = d->ay - acc_align[1];
+	const float bz = d->az - acc_align[2];
+
+	const float sf = sinf(s->roll * DEG2RAD), cf = cosf(s->roll * DEG2RAD);
+	const float st = sinf(s->pitch * DEG2RAD), ct = cosf(s->pitch * DEG2RAD);
+	const float sp = sinf(s->yaw * DEG2RAD), cp = cosf(s->yaw * DEG2RAD);
+
+	float ax = cp * ct * bx + (cp * st * sf - sp * cf) * by + (cp * st * cf + sp * sf) * bz;
+	float ay = sp * ct * bx + (sp * st * sf + cp * cf) * by + (sp * st * cf - cp * sf) * bz;
+	float az = -st * bx + ct * sf * by + ct * cf * bz - g_ref;
+
+	ax = deadband(ax);
+	ay = deadband(ay);
+	az = deadband(az);
+
+	if (still) {
+		/* ZUPT : carte immobile, donc vitesse nulle par définition */
+		s->vx = 0.0f;
+		s->vy = 0.0f;
+		s->vz = 0.0f;
+	} else {
+		s->vx = clampf(s->vx + ax * dt, MAX_SPEED);
+		s->vy = clampf(s->vy + ay * dt, MAX_SPEED);
+		s->vz = clampf(s->vz + az * dt, MAX_SPEED);
+	}
+
+	s->x = clampf(s->x + s->vx * dt, MAX_POSITION);
+	s->y = clampf(s->y + s->vy * dt, MAX_POSITION);
+	s->z = clampf(s->z + s->vz * dt, MAX_POSITION);
+}
+
+/* ---------- Publication : télémétrie IMU + état du tracker ---------- */
+
+static void publish(struct imu_telemetry *st, struct state_detector *det,
+		    bool imu_valid, const struct mpu6050_data *d)
+{
+	struct state_inputs in = {
+		.imu_valid = imu_valid,
+		.env_valid = !(telemetry_get_flags() & FLAG_SI7021_INVALID),
+		.a_norm = g_ref,       /* pas de nouvelle mesure : pas de mouvement */
+		.g_ref = g_ref,
+		.gyro_norm = 0.0f,
+		.roll = st->roll,
+		.pitch = st->pitch,
+	};
+
+	if (d != NULL) {
+		in.a_norm = sqrtf(d->ax * d->ax + d->ay * d->ay + d->az * d->az);
+		in.gyro_norm = sqrtf(d->gx * d->gx + d->gy * d->gy + d->gz * d->gz);
+	}
+
+	struct state_output out = state_detector_update(det, &in, k_uptime_get());
+
+	if (out.impact) {
+		st->flags |= FLAG_IMPACT;
+	} else {
+		st->flags &= ~FLAG_IMPACT;
+	}
+
+	telemetry_set_imu(st);
+	telemetry_set_state(out.state);
+}
+
 /* ---------- Boucle principale du thread ---------- */
 
 static void imu_thread(void *p1, void *p2, void *p3)
@@ -198,6 +319,7 @@ static void imu_thread(void *p1, void *p2, void *p3)
 	struct imu_telemetry st = { 0 };
 	struct calib_state calib;
 	struct mpu6050_data d;
+	struct state_detector det;
 
 	bool sensor_ok = true;
 	bool attitude_lost = false;   /* rotations manquées pendant une panne */
@@ -211,6 +333,7 @@ static void imu_thread(void *p1, void *p2, void *p3)
 	st.flags = FLAG_CALIB_PENDING | FLAG_INERTIAL_ONLY | FLAG_YAW_UNRELIABLE;
 	mpu6050_set_gyro_bias(0.0f, 0.0f, 0.0f);
 	calib_reset(&calib);
+	state_detector_init(&det);
 
 	int64_t last_ticks = k_uptime_ticks();
 
@@ -237,7 +360,7 @@ static void imu_thread(void *p1, void *p2, void *p3)
 					st.reinits++;
 				}
 			}
-			telemetry_set_imu(&st);
+			publish(&st, &det, false, NULL);
 			continue;
 		}
 
@@ -252,7 +375,7 @@ static void imu_thread(void *p1, void *p2, void *p3)
 				last_reinit_ms = k_uptime_get();
 			}
 			/* Les dernières valeurs valides restent publiées */
-			telemetry_set_imu(&st);
+			publish(&st, &det, sensor_ok, NULL);
 			continue;
 		}
 
@@ -270,7 +393,7 @@ static void imu_thread(void *p1, void *p2, void *p3)
 		/* --- Calibration du gyroscope (non bloquante), après préchauffage --- */
 		if (!st.calibrated) {
 			if (k_uptime_get() - start_ms < WARMUP_MS) {
-				telemetry_set_imu(&st);
+				publish(&st, &det, true, &d);
 				continue;
 			}
 			if (calib_add(&calib, &d)) {
@@ -278,6 +401,16 @@ static void imu_thread(void *p1, void *p2, void *p3)
 					mpu6050_set_gyro_bias(calib.sum[0] / calib.count,
 							      calib.sum[1] / calib.count,
 							      calib.sum[2] / calib.count);
+					/* Alignement initial de l'accéléromètre */
+					const float mx = calib.asum[0] / calib.count;
+					const float my = calib.asum[1] / calib.count;
+					const float mz = calib.asum[2] / calib.count;
+
+					g_ref = sqrtf(mx * mx + my * my + mz * mz);
+					acc_align[0] = mx;
+					acc_align[1] = my;
+					acc_align[2] = mz - g_ref;
+
 					st.calibrated = true;
 					st.flags &= ~(FLAG_CALIB_PENDING | FLAG_YAW_UNRELIABLE);
 
@@ -285,6 +418,8 @@ static void imu_thread(void *p1, void *p2, void *p3)
 					st.roll = 0.0f;
 					st.pitch = 0.0f;
 					st.yaw = 0.0f;
+					st.x = st.y = st.z = 0.0f;
+					st.vx = st.vy = st.vz = 0.0f;
 					attitude_lost = false;
 					seconds_since_calib = 0.0f;
 				} else {
@@ -292,7 +427,7 @@ static void imu_thread(void *p1, void *p2, void *p3)
 					calib_reset(&calib);
 				}
 			}
-			telemetry_set_imu(&st);
+			publish(&st, &det, true, &d);
 			continue;
 		}
 
@@ -301,7 +436,7 @@ static void imu_thread(void *p1, void *p2, void *p3)
 		bool still = fabsf(d.gx) < STILL_GYRO_DPS &&
 			     fabsf(d.gy) < STILL_GYRO_DPS &&
 			     fabsf(d.gz) < STILL_GYRO_DPS &&
-			     fabsf(a_norm - STANDARD_GRAVITY) < STILL_ACC_TOLERANCE;
+			     fabsf(a_norm - g_ref) < STILL_ACC_TOLERANCE;
 
 		still_count = still ? still_count + 1 : 0;
 		if (still_count >= STILL_SAMPLES) {
@@ -315,8 +450,9 @@ static void imu_thread(void *p1, void *p2, void *p3)
 					      bz + alpha * d.gz);
 		}
 
-		/* --- Attitude --- */
+		/* --- Attitude, puis vitesse et position --- */
 		attitude_step(&st, &d, dt);
+		motion_step(&st, &d, dt, still_count >= STILL_SAMPLES);
 		seconds_since_calib += dt;
 
 		bool yaw_drifted = seconds_since_calib * GYRO_RESIDUAL_BIAS_DPS >
@@ -328,7 +464,7 @@ static void imu_thread(void *p1, void *p2, void *p3)
 			st.flags &= ~FLAG_YAW_UNRELIABLE;
 		}
 
-		telemetry_set_imu(&st);
+		publish(&st, &det, true, &d);
 	}
 }
 

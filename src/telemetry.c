@@ -58,6 +58,18 @@ void telemetry_set_state(enum tracker_state state)
 	k_mutex_unlock(&telemetry_lock);
 }
 
+uint16_t telemetry_get_flags(void)
+{
+	uint16_t flags;
+
+	k_mutex_lock(&telemetry_lock, K_FOREVER);
+	flags = (data.imu.flags | data.env.flags | data.gps.flags |
+		 data.light.flags) & FLAGS_DEFINED_MASK;
+	k_mutex_unlock(&telemetry_lock);
+
+	return flags;
+}
+
 void telemetry_snapshot(struct telemetry *out)
 {
 	k_mutex_lock(&telemetry_lock, K_FOREVER);
