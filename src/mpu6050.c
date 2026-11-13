@@ -35,9 +35,9 @@
 /* CONFIG : DLPF_CFG = 4 -> bande passante ~21 Hz (accél.) / ~20 Hz (gyro) */
 #define CONFIG_DLPF_20HZ        0x04
 
-/* GYRO_CONFIG : FS_SEL = 1 (bits 4:3) -> ±500 °/s */
-#define GYRO_FS_500DPS          (1 << 3)
-#define GYRO_SENS_LSB_PER_DPS   65.5f
+/* GYRO_CONFIG : FS_SEL = 2 (bits 4:3) -> ±1000 °/s */
+#define GYRO_FS_1000DPS          (2 << 3)
+#define GYRO_SENS_LSB_PER_DPS   32.8f
 
 /* ACCEL_CONFIG : AFS_SEL = 2 (bits 4:3) -> ±8 g */
 #define ACCEL_FS_8G             (2 << 3)
@@ -152,7 +152,7 @@ int mpu6050_init(const struct device *i2c)
 		ret = write_reg_checked(i2c, REG_SMPLRT_DIV, SMPLRT_DIV_50HZ);
 	}
 	if (ret == 0) {
-		ret = write_reg_checked(i2c, REG_GYRO_CONFIG, GYRO_FS_500DPS);
+		ret = write_reg_checked(i2c, REG_GYRO_CONFIG, GYRO_FS_1000DPS);
 	}
 	if (ret == 0) {
 		ret = write_reg_checked(i2c, REG_ACCEL_CONFIG, ACCEL_FS_8G);
