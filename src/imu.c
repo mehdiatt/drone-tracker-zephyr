@@ -17,9 +17,12 @@
  *
  * Vitesse et position locales : l'accélération est ramenée dans le repère
  * local avec les angles estimés, g est retirée, puis on intègre deux fois
- * (Euler). La dérive est inévitable (flag 0x0040 toujours actif) ; deux
+ * (Euler). La dérive est inévitable (flag 0x0040 toujours actif) ; trois
  * protections la limitent : une zone morte sur les petites accélérations,
- * et la remise à zéro de la vitesse quand la carte est immobile (ZUPT).
+ * la remise à zéro de la vitesse quand la carte est immobile (ZUPT), et
+ * l'intégration de la vitesse uniquement en état FLYING : un tracker IDLE
+ * a par définition une vitesse nulle, sinon le simulateur afficherait un
+ * drone "immobile" qui se déplace.
  *
  * État (IDLE / FLYING / PROBLEM) : décidé à chaque mesure par state.c.
  *
@@ -242,7 +245,7 @@ static float deadband(float v)
  * Au repos à plat, l'accéléromètre mesure +g sur Z : on retire g sur Z local.
  */
 static void motion_step(struct imu_telemetry *s, const struct mpu6050_data *d,
-			float dt, bool still)
+			float dt, bool zero_velocity)
 {
 	const float bx = d->ax - acc_align[0];
 	const float by = d->ay - acc_align[1];
@@ -260,8 +263,8 @@ static void motion_step(struct imu_telemetry *s, const struct mpu6050_data *d,
 	ay = deadband(ay);
 	az = deadband(az);
 
-	if (still) {
-		/* ZUPT : carte immobile, donc vitesse nulle par définition */
+	if (zero_velocity) {
+		/* Immobile (ZUPT) ou pas en vol : vitesse nulle par définition */
 		s->vx = 0.0f;
 		s->vy = 0.0f;
 		s->vz = 0.0f;
@@ -278,8 +281,8 @@ static void motion_step(struct imu_telemetry *s, const struct mpu6050_data *d,
 
 /* ---------- Publication : télémétrie IMU + état du tracker ---------- */
 
-static void publish(struct imu_telemetry *st, struct state_detector *det,
-		    bool imu_valid, const struct mpu6050_data *d)
+static enum tracker_state publish(struct imu_telemetry *st, struct state_detector *det,
+				  bool imu_valid, const struct mpu6050_data *d)
 {
 	struct state_inputs in = {
 		.imu_valid = imu_valid,
@@ -306,6 +309,7 @@ static void publish(struct imu_telemetry *st, struct state_detector *det,
 
 	telemetry_set_imu(st);
 	telemetry_set_state(out.state);
+	return out.state;
 }
 
 /* ---------- Boucle principale du thread ---------- */
@@ -321,6 +325,7 @@ static void imu_thread(void *p1, void *p2, void *p3)
 	struct mpu6050_data d;
 	struct state_detector det;
 
+	enum tracker_state state = STATE_IDLE;   /* état de la mesure précédente */
 	bool sensor_ok = true;
 	bool attitude_lost = false;   /* rotations manquées pendant une panne */
 	int consecutive_errors = 0;
@@ -452,7 +457,8 @@ static void imu_thread(void *p1, void *p2, void *p3)
 
 		/* --- Attitude, puis vitesse et position --- */
 		attitude_step(&st, &d, dt);
-		motion_step(&st, &d, dt, still_count >= STILL_SAMPLES);
+		motion_step(&st, &d, dt,
+			    still_count >= STILL_SAMPLES || state != STATE_FLYING);
 		seconds_since_calib += dt;
 
 		bool yaw_drifted = seconds_since_calib * GYRO_RESIDUAL_BIAS_DPS >
@@ -464,7 +470,7 @@ static void imu_thread(void *p1, void *p2, void *p3)
 			st.flags &= ~FLAG_YAW_UNRELIABLE;
 		}
 
-		publish(&st, &det, true, &d);
+		state = publish(&st, &det, true, &d);
 	}
 }
 
