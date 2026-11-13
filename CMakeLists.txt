@@ -10,6 +10,7 @@ target_sources(app PRIVATE
     src/mpu6050.c
     src/rgb_led.c
     src/ldr.c
+    src/si7021.c
 )
 
 target_include_directories(app PRIVATE)

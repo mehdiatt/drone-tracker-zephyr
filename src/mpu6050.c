@@ -8,7 +8,6 @@
 #include <errno.h>
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/i2c.h>
-#include <zephyr/sys/printk.h>
 
 /* Adresse I2C 7 bits (broche AD0 à la masse) */
 #define MPU6050_ADDR            0x68
@@ -79,74 +78,60 @@ static int write_reg(const struct device *i2c, uint8_t reg, uint8_t val)
 
 /*
  * Écrit un registre puis le relit pour vérifier que la valeur a bien été prise.
- * Réessaie jusqu'à 3 fois en cas d'erreur sur le bus.
+ * Réessaie jusqu'à 3 fois en cas d'erreur passagère sur le bus.
+ * Aucun affichage ici : le driver ne doit jamais écrire sur la console
+ * (en mode SIMU, seul le thread de sortie a le droit d'écrire).
  */
 #define WRITE_RETRIES 3
 
 static int write_reg_checked(const struct device *i2c, uint8_t reg, uint8_t val)
 {
 	uint8_t readback;
-	int ret = 0;
+	int ret = -EIO;
 
-	for (int attempt = 1; attempt <= WRITE_RETRIES; attempt++) {
+	for (int attempt = 0; attempt < WRITE_RETRIES; attempt++) {
+		if (attempt > 0) {
+			k_msleep(5);
+		}
+
 		ret = write_reg(i2c, reg, val);
 		if (ret != 0) {
-			/* DEBUG : à retirer une fois l'initialisation validée */
-			printk("  reg 0x%02X : ecriture refusee (essai %d, err %d)\n",
-			       reg, attempt, ret);
-			k_msleep(5);
 			continue;
 		}
 
 		ret = i2c_reg_read_byte(i2c, MPU6050_ADDR, reg, &readback);
 		if (ret != 0) {
-			printk("  reg 0x%02X : relecture refusee (essai %d, err %d)\n",
-			       reg, attempt, ret);
-			k_msleep(5);
 			continue;
 		}
 
-		if (readback != val) {
-			printk("  reg 0x%02X : ecrit 0x%02X, relu 0x%02X (essai %d)\n",
-			       reg, val, readback, attempt);
-			ret = -EIO;
-			k_msleep(5);
-			continue;
+		if (readback == val) {
+			return 0;
 		}
-
-		return 0;
+		ret = -EIO;
 	}
 	return ret;
 }
 
-/* DEBUG : affiche l'étape qui échoue (à retirer une fois validé) */
-#define STEP(n, call)                                             \
-	do {                                                      \
-		ret = (call);                                     \
-		if (ret != 0) {                                   \
-			printk("MPU6050 init : echec etape %d (err %d)\n", \
-			       (n), ret);                         \
-			return ret;                               \
-		}                                                 \
-	} while (0)
-
 int mpu6050_init(const struct device *i2c)
 {
 	uint8_t who;
+	uint8_t pwr;
 	int ret;
 
-	/* DEBUG : confirme que c'est bien cette version qui a été flashée */
-	printk("MPU6050 init (driver v3 : retries + diagnostic)\n");
-
 	/* 1. Identité */
-	STEP(1, i2c_reg_read_byte(i2c, MPU6050_ADDR, REG_WHO_AM_I, &who));
+	ret = i2c_reg_read_byte(i2c, MPU6050_ADDR, REG_WHO_AM_I, &who);
+	if (ret != 0) {
+		return ret;
+	}
 	if (who != WHO_AM_I_VALUE) {
-		printk("MPU6050 init : WHO_AM_I = 0x%02X\n", who);
 		return -ENODEV;
 	}
 
 	/* 2. Reset complet, puis attente que le capteur redémarre */
-	STEP(2, write_reg(i2c, REG_PWR_MGMT_1, PWR_DEVICE_RESET));
+	ret = write_reg(i2c, REG_PWR_MGMT_1, PWR_DEVICE_RESET);
+	if (ret != 0) {
+		return ret;
+	}
 	k_msleep(100);
 
 	/*
@@ -154,34 +139,44 @@ int mpu6050_init(const struct device *i2c)
 	 * L'oscillateur interne est stable immédiatement : on peut configurer
 	 * les registres sans risque que l'interface I2C décroche.
 	 */
-	STEP(3, write_reg_checked(i2c, REG_PWR_MGMT_1, PWR_WAKE_INTERNAL_OSC));
+	ret = write_reg_checked(i2c, REG_PWR_MGMT_1, PWR_WAKE_INTERNAL_OSC);
+	if (ret != 0) {
+		return ret;
+	}
 	k_msleep(10);
 
 	/* 4. Filtre, fréquence d'échantillonnage et plages de mesure */
-	STEP(4, write_reg_checked(i2c, REG_CONFIG, CONFIG_DLPF_20HZ));
-	STEP(5, write_reg_checked(i2c, REG_SMPLRT_DIV, SMPLRT_DIV_50HZ));
-	STEP(6, write_reg_checked(i2c, REG_GYRO_CONFIG, GYRO_FS_500DPS));
-	STEP(7, write_reg_checked(i2c, REG_ACCEL_CONFIG, ACCEL_FS_8G));
+	ret = write_reg_checked(i2c, REG_CONFIG, CONFIG_DLPF_20HZ);
+	if (ret == 0) {
+		ret = write_reg_checked(i2c, REG_SMPLRT_DIV, SMPLRT_DIV_50HZ);
+	}
+	if (ret == 0) {
+		ret = write_reg_checked(i2c, REG_GYRO_CONFIG, GYRO_FS_500DPS);
+	}
+	if (ret == 0) {
+		ret = write_reg_checked(i2c, REG_ACCEL_CONFIG, ACCEL_FS_8G);
+	}
+	if (ret != 0) {
+		return ret;
+	}
 
 	/*
-	 * 8. Bascule en dernier sur la PLL du gyroscope X, plus stable.
+	 * 5. Bascule en dernier sur la PLL du gyroscope X, plus stable.
 	 * Le gyroscope met ~30 ms à démarrer (datasheet) et l'I2C peut ne pas
 	 * répondre pendant le changement d'horloge : on attend 100 ms
 	 * avant de vérifier.
 	 */
-	STEP(8, write_reg(i2c, REG_PWR_MGMT_1, PWR_WAKE_PLL_GYROX));
+	ret = write_reg(i2c, REG_PWR_MGMT_1, PWR_WAKE_PLL_GYROX);
+	if (ret != 0) {
+		return ret;
+	}
 	k_msleep(100);
 
-	uint8_t pwr;
-
-	STEP(9, i2c_reg_read_byte(i2c, MPU6050_ADDR, REG_PWR_MGMT_1, &pwr));
-	if (pwr != PWR_WAKE_PLL_GYROX) {
-		printk("  reg 0x%02X : ecrit 0x%02X, relu 0x%02X\n",
-		       REG_PWR_MGMT_1, PWR_WAKE_PLL_GYROX, pwr);
-		return -EIO;
+	ret = i2c_reg_read_byte(i2c, MPU6050_ADDR, REG_PWR_MGMT_1, &pwr);
+	if (ret != 0) {
+		return ret;
 	}
-
-	return 0;
+	return (pwr == PWR_WAKE_PLL_GYROX) ? 0 : -EIO;
 }
 
 /* Lecture convertie en unités physiques, SANS correction de calibration */

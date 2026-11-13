@@ -12,6 +12,7 @@
 #include "mpu6050.h"
 #include "rgb_led.h"
 #include "ldr.h"
+#include "si7021.h"
 
 static const struct device *const i2c = DEVICE_DT_GET(DT_NODELABEL(i2c2));
 
@@ -87,6 +88,17 @@ if (ldr_ready) {
 
     printk("\n=== MPU6050 configured: +-8 g, +-500 deg/s, 50 Hz, DLPF 20 Hz ===\n");
 
+    /* Initialize Si7021 (same I2C bus) */
+    int si7021_ready = 0;
+
+    ret = si7021_init(i2c);
+    if (ret == 0) {
+        si7021_ready = 1;
+        printk("Si7021 initialized successfully\n");
+    } else {
+        printk("Si7021 initialization failed (err %d)\n", ret);
+    }
+
     /* Gyroscope calibration */
     printk("Gyroscope calibration: keep the board still (2 seconds)...\n");
 
@@ -146,6 +158,22 @@ if (ldr_ready) {
             printk("   T=");
 print_2dec(d.temp_c);
 printk(" C\n");
+
+/* Read Si7021 */
+if (si7021_ready) {
+    struct si7021_data env;
+
+    ret = si7021_read(i2c, &env);
+    if (ret != 0) {
+        printk("Si7021 reading error (err %d)\n", ret);
+    } else {
+        printk("ENV: T=");
+        print_2dec(env.temp_c);
+        printk(" C  RH=");
+        print_2dec(env.rh_percent);
+        printk(" %%\n");
+    }
+}
 
 /* Read LDR continuously */
 if (ldr_ready) {
