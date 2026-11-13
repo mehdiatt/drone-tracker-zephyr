@@ -11,6 +11,8 @@ target_sources(app PRIVATE
     src/rgb_led.c
     src/ldr.c
     src/si7021.c
+    src/telemetry.c
+    src/imu.c
 )
 
 target_include_directories(app PRIVATE)

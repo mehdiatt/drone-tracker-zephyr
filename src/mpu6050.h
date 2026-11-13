@@ -24,12 +24,16 @@ int mpu6050_init(const struct device *i2c);
  */
 int mpu6050_calibrate_gyro(const struct device *i2c, int samples);
 
-/* Renvoie le biais du gyroscope mesuré par mpu6050_calibrate_gyro(), en °/s */
+/* Fixe le biais du gyroscope (°/s), soustrait ensuite par mpu6050_read() */
+void mpu6050_set_gyro_bias(float bx, float by, float bz);
+
+/* Renvoie le biais du gyroscope actuellement appliqué, en °/s */
 void mpu6050_get_gyro_bias(float *bx, float *by, float *bz);
 
 /*
  * Lit les 6 axes en une seule transaction, les convertit en unités physiques
- * et applique les corrections de calibration. Retourne 0 si OK.
+ * et applique les corrections de calibration. Retourne 0 si OK,
+ * -ENODATA si le capteur a redémarré (données toutes nulles), ou l'erreur I2C.
  */
 int mpu6050_read(const struct device *i2c, struct mpu6050_data *out);
 

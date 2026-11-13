@@ -6,6 +6,7 @@
 #include "mpu6050.h"
 
 #include <errno.h>
+#include <stdbool.h>
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/i2c.h>
 
@@ -62,7 +63,7 @@
 #define ACC_Z_OFFSET            (-1.79f)
 #define ACC_Z_GAIN              0.980f
 
-/* Biais du gyroscope, mesuré au démarrage par mpu6050_calibrate_gyro() */
+/* Biais du gyroscope, fixé par mpu6050_calibrate_gyro() ou mpu6050_set_gyro_bias() */
 static float gyro_bias_x, gyro_bias_y, gyro_bias_z;
 
 /* Assemble deux octets (poids fort en premier) en entier signé 16 bits */
@@ -191,6 +192,24 @@ static int read_uncalibrated(const struct device *i2c, struct mpu6050_data *out)
 		return ret;
 	}
 
+	/*
+	 * Capteur redémarré (coupure d'alimentation brève) : il revient en veille
+	 * avec tous ses registres de données à zéro, tout en continuant de répondre
+	 * sur le bus. Une vraie mesure n'est jamais entièrement nulle (la gravité
+	 * est toujours présente), donc 14 octets à zéro = donnée invalide.
+	 */
+	bool all_zero = true;
+
+	for (size_t i = 0; i < sizeof(buf); i++) {
+		if (buf[i] != 0) {
+			all_zero = false;
+			break;
+		}
+	}
+	if (all_zero) {
+		return -ENODATA;
+	}
+
 	/* Ordre : AX, AY, AZ, TEMP, GX, GY, GZ (2 octets chacun) */
 	const float a_scale = STANDARD_GRAVITY / ACCEL_SENS_LSB_PER_G;
 
@@ -233,6 +252,13 @@ int mpu6050_calibrate_gyro(const struct device *i2c, int samples)
 	gyro_bias_z = sz / samples;
 
 	return 0;
+}
+
+void mpu6050_set_gyro_bias(float bx, float by, float bz)
+{
+	gyro_bias_x = bx;
+	gyro_bias_y = by;
+	gyro_bias_z = bz;
 }
 
 void mpu6050_get_gyro_bias(float *bx, float *by, float *bz)
