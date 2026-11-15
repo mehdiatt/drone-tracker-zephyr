@@ -17,6 +17,8 @@ target_sources(app PRIVATE
     src/env.c
     src/simu_frame.c
     src/gps.c
+    src/mode.c
+    src/output.c
 )
 
 target_include_directories(app PRIVATE)
