@@ -15,6 +15,7 @@
 #include "mpu6050.h"
 #include "rgb_led.h"
 #include "telemetry.h"
+#include "gps.h"
 
 static const struct device *const i2c = DEVICE_DT_GET(DT_NODELABEL(i2c2));
 
@@ -66,6 +67,7 @@ int main(void)
 
 	imu_start(i2c);
 	env_start(i2c);
+	gps_init();
 	printk("Calibration : laissez la carte immobile et a plat (~7 s)...\n");
 
 	while (1) {
@@ -93,6 +95,8 @@ int main(void)
 		printk("ENV: T=");         print_2dec(t.env.temp_c);
 		printk(" C  RH=");         print_2dec(t.env.rh_percent);
 		printk(" %%  (%s)\n", (t.flags & FLAG_SI7021_INVALID) ? "invalide" : "ok");
+		printk("GPS: fix=%u sats=%u %s\n", t.gps.fix, t.gps.sats,
+		       (t.flags & FLAG_GPS_INVALID) ? "(pas de fix)" : "(ok)");
 		printk("---\n");
 	}
 

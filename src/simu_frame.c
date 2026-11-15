@@ -108,7 +108,7 @@ int simu_frame_build(const struct telemetry *t,
                  (unsigned int)tms_ms);
 
     /* GPS fix and satellites */
-    unsigned int fix = t->gps.fix > 9 ? 9 : t->gps.fix;
+    unsigned int fix = t->gps.fix ? 1 : 0;
     unsigned int sats = t->gps.sats > 99 ? 99 : t->gps.sats;
 
     p += sprintf(p, ",%1u,%02u", fix, sats);

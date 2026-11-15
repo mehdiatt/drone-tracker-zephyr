@@ -26,7 +26,7 @@ static const struct device *gps_uart = DEVICE_DT_GET(GPS_UART_NODE);
 #define GPS_PRIORITY      5
 
 /* Debug : afficher les lignes NMEA reçues */
-#define GPS_DEBUG_RAW     1
+#define GPS_DEBUG_RAW     0
 
 
 
