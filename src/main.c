@@ -36,7 +36,10 @@ int main(void)
 {
 	/* En SIMU, aucun texte en dehors des trames (GR5) */
 	const bool verbose = (START_MODE != MODE_SIMU);
-
+/* Bouton B1 : TEST -> NORMAL -> SIMU -> TEST */
+	if (mode_button_init() != 0 && verbose) {
+		printk("Avertissement : bouton B1 non disponible\n");
+	}
 	mode_set(START_MODE);
 
 	if (verbose) {
