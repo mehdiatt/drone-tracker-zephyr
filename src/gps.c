@@ -361,11 +361,13 @@ static void gps_isr(const struct device *dev, void *user_data)
 {
     ARG_UNUSED(user_data);
 
-    while (uart_irq_update(dev) &&
-           uart_irq_rx_ready(dev))
+    uart_irq_update(dev);
+
+    if (uart_irq_rx_ready(dev))
     {
         uint8_t c;
 
+        /* Vide toute la FIFO de réception */
         while (uart_fifo_read(dev, &c, 1) == 1)
         {
             if (c == '\n')
