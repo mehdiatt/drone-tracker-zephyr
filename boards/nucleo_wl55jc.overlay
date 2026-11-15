@@ -1,9 +1,63 @@
-#include <zephyr/dt-bindings/pinctrl/stm32-pinctrl.h>
+/*
+ * Overlay devicetree - Drone tracking & telemetry node
+ * Carte : NUCLEO-WL55JC
+ *
+ * Câblage :
+ *   I2C2  : SCL = D15 (PA12), SDA = D14 (PA11)
+ *           -> MPU6050 (0x68) et Si7021 (0x40) sur le même bus
+ *   USART1: RX  = D0  (PB7)  <- TX du GPS (9600 bauds)
+ *           TX  = D1  (PB6)  -> RX du GPS (optionnel, non câblé)
+ *   ADC1  : A0  = PB1, canal 5 <- sortie S du module LDR
+ *   LED RGB (anode commune sur 3V3, allumée quand la broche est à 0) :
+ *           rouge = D3 (PB3), vert = D4 (PB5), bleu = D5 (PB8)
+ *   Bouton B1 : défini par la carte (alias sw0)
+ *   Console / trames SIMU : LPUART1 via ST-LINK VCP (défini par la carte)
+ */
 
+#include <zephyr/dt-bindings/adc/adc.h>
+
+/* ---------- I2C : MPU6050 + Si7021 ---------- */
+&i2c2 {
+	pinctrl-0 = <&i2c2_scl_pa12 &i2c2_sda_pa11>;
+	pinctrl-names = "default";
+	clock-frequency = <100000>;   
+	status = "okay";
+};
+
+/* ---------- UART : GPS ---------- */
+&usart1 {
+	pinctrl-0 = <&usart1_tx_pb6 &usart1_rx_pb7>;
+	pinctrl-names = "default";
+	current-speed = <9600>;       /* Débit par défaut du PA6H */
+	status = "okay";
+};
+
+/* ---------- ADC : LDR ---------- */
+&adc1 {
+	pinctrl-0 = <&adc_in5_pb1>;
+	pinctrl-names = "default";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@5 {
+		reg = <5>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <12>;
+	};
+};
+
+/* ---------- Ressources utilisées par l'application ---------- */
 / {
-	aliases {
-		//led0 = &blue_led_1; 	// This is LED1 as labeled STM32WL55JC board's 
-		led0 = &green_led_2; 	// This is LED2 as labeled STM32WL55JC board's 
-		//led0 = &red_led_3; 	// This is LED3 as labeled STM32WL55JC board's 
+	zephyr,user {
+		/* Canal ADC du LDR */
+		io-channels = <&adc1 5>;
+
+		/* LED RGB, anode commune -> active à l'état bas */
+		red-gpios   = <&gpiob 3 GPIO_ACTIVE_LOW>;
+		green-gpios = <&gpiob 5 GPIO_ACTIVE_LOW>;
+		blue-gpios  = <&gpiob 8 GPIO_ACTIVE_LOW>;
 	};
 };
