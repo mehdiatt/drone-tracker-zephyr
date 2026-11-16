@@ -52,14 +52,14 @@
  *   gain   = 9.80665 / ((m_plus - m_moins) / 2)
  *   valeur corrigée = (mesure - offset) * gain
  *
- * Axe Z mesuré le 06/11/2026 : m_plus = +8.22, m_moins = -11.80 m/s²
- *   -> offset = -1.79 m/s², gain = 9.80665 / 10.01 = 0.980
- * Axes X et Y : pas encore mesurés, corrections neutres.
+ * Axe Z mesuré : m_plus = +8.22,  m_moins = -11.80 -> offset -1.79, gain 0.980
+ * Axe X mesuré : m_plus = +10.34, m_moins = -9.36  -> offset +0.49, gain 0.9956
+ * Axe Y mesuré : m_plus = +9.84,  m_moins = -9.76  -> offset +0.04, gain 1.0007
  */
-#define ACC_X_OFFSET            0.0f
-#define ACC_X_GAIN              1.0f
-#define ACC_Y_OFFSET            0.0f
-#define ACC_Y_GAIN              1.0f
+#define ACC_X_OFFSET            0.49f
+#define ACC_X_GAIN              0.9956f
+#define ACC_Y_OFFSET            0.04f
+#define ACC_Y_GAIN              1.0007f
 #define ACC_Z_OFFSET            (-1.79f)
 #define ACC_Z_GAIN              0.980f
 

@@ -22,7 +22,7 @@
  *   2. LDR complètement couvert (doigt ou capuchon opaque) -> LDR_RAW_DARK ;
  *   3. lampe du téléphone à 5 cm du LDR                    -> LDR_RAW_BRIGHT ;
  *   4. recompiler. 0 % = obscurité, 100 % = lampe à 5 cm.
- * Valeurs mesurées le : (date à compléter)
+ * Valeurs mesurées le : 16/11/2026
  */
 #define LDR_RAW_DARK            3200    
 #define LDR_RAW_BRIGHT          570    
