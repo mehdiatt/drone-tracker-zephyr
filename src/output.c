@@ -154,7 +154,8 @@ static void print_report(const struct telemetry *t, enum op_mode mode)
 	printk(" %%  %s\n", env_ok ? "(ok)" : "(Si7021 invalide)");
 
 	printk("LDR  light=");  put_fixed(t->light.percent, false, 3, 1);
-	printk(" %%  %s\n", ldr_ok ? "(ok)" : "(invalide / non calibre)");
+	printk(" %%  raw=%u  %s\n", (unsigned int)t->light.raw,
+	       ldr_ok ? "(ok)" : "(invalide : sature ou hors calibration)");
 }
 
 /* ---------- Trame SIMU ---------- */

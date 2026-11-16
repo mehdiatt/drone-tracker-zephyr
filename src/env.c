@@ -5,11 +5,16 @@
  * sérialise les transactions, et le mode "No Hold" du Si7021 libère le bus
  * pendant ses ~25 ms de conversion : le thread IMU n'est donc jamais bloqué.
  *
- * Robustesse (SM5) : en cas d'erreur, flag 0x0008 et dernières valeurs
- * conservées ; le capteur est réinitialisé à la période suivante.
+ * Le LDR (rôle B) est lu dans le même thread et à la même période : la lumière
+ * varie lentement, 2 s suffit (NM2), et cela évite un thread de plus.
+ *
+ * Robustesse (SM5) : en cas d'erreur, flag 0x0008 (Si7021) ou 0x0004 (LDR)
+ * et dernières valeurs conservées ; le capteur est réinitialisé à la période
+ * suivante.
  */
 
 #include "env.h"
+#include "ldr.h"
 #include "si7021.h"
 #include "telemetry.h"
 
@@ -35,6 +40,10 @@ static void env_thread(void *p1, void *p2, void *p3)
 	struct si7021_data d;
 	bool sensor_ready = false;
 
+	struct light_telemetry light = { .flags = FLAG_LDR_INVALID };
+	struct ldr_sample ls;
+	bool ldr_ready = false;
+
 	while (1) {
 		if (!sensor_ready) {
 			sensor_ready = (si7021_init(env_i2c) == 0);
@@ -51,6 +60,27 @@ static void env_thread(void *p1, void *p2, void *p3)
 		}
 
 		telemetry_set_env(&st);
+
+		/* --- LDR --- */
+		if (!ldr_ready) {
+			ldr_ready = (ldr_init() == 0);
+		}
+
+		if (ldr_ready && ldr_read(&ls) == 0) {
+			light.raw = ls.raw;
+			light.percent = ls.percent;
+			if (ls.valid) {
+				light.flags &= ~FLAG_LDR_INVALID;
+			} else {
+				/* Saturé ou hors calibration : valeur gardée, mais signalée */
+				light.flags |= FLAG_LDR_INVALID;
+			}
+		} else {
+			light.flags |= FLAG_LDR_INVALID;
+			ldr_ready = false;
+		}
+
+		telemetry_set_light(&light);
 		k_sleep(K_MSEC(ENV_PERIOD_MS));
 	}
 }

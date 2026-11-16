@@ -68,6 +68,7 @@ struct gps_telemetry {
 
 struct light_telemetry {
 	float percent;             /* 0..100 */
+	uint16_t raw;              /* valeur ADC moyenne, affichée en TEST pour calibrer */
 	uint16_t flags;
 };
 
