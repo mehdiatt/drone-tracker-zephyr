@@ -19,6 +19,7 @@ target_sources(app PRIVATE
     src/gps.c
     src/mode.c
     src/output.c
+    src/stats.c
 )
 
 target_include_directories(app PRIVATE)

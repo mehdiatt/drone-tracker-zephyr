@@ -9,6 +9,10 @@
  * Un changement de mode est donc pris en compte en moins de 100 ms, et le
  * premier rapport du nouveau mode part immédiatement.
  *
+ * Statistiques NM4 : à chaque réveil, quel que soit le mode, la mesure est
+ * ajoutée à la fenêtre glissante de 30 s (stats.c) ; le rapport NORMAL
+ * affiche la moyenne, le min et le max de chaque grandeur.
+ *
  * Seul ce thread écrit sur la console : en SIMU, aucun autre texte ne peut
  * s'intercaler entre deux trames (GR5, SM6), à condition qu'aucun autre code
  * n'appelle printk pendant ce mode.
@@ -22,6 +26,7 @@
 #include "mode.h"
 #include "rgb_led.h"
 #include "simu_frame.h"
+#include "stats.h"
 #include "telemetry.h"
 
 #include <errno.h>
@@ -158,6 +163,35 @@ static void print_report(const struct telemetry *t, enum op_mode mode)
 	       ldr_ok ? "(ok)" : "(invalide : sature ou hors calibration)");
 }
 
+/* ---------- Statistiques sur 30 s (NM4) ---------- */
+
+static void put_stat(const char *label, const struct stats_result *r,
+		     bool with_sign, int int_digits, const char *unit)
+{
+	printk("%s", label);
+	if (r->n == 0) {
+		printk("pas de mesure valide\n");
+		return;
+	}
+	printk("moy=");  put_fixed(r->mean, with_sign, int_digits, 1);
+	printk(" min="); put_fixed(r->min, with_sign, int_digits, 1);
+	printk(" max="); put_fixed(r->max, with_sign, int_digits, 1);
+	printk(" %s\n", unit);
+}
+
+static void print_stats(void)
+{
+	struct stats_result r[STAT_COUNT];
+	const int window_s = stats_get(r);
+
+	printk("--- STATISTIQUES sur les %d dernieres s ---\n", window_s);
+	put_stat("LUM  ", &r[STAT_LIGHT], false, 3, "%");
+	put_stat("TEMP ", &r[STAT_TEMP],  true,  3, "C");
+	put_stat("RH   ", &r[STAT_RH],    false, 3, "%");
+	put_stat("|a|  ", &r[STAT_ACC],   false, 3, "m/s2");
+	put_stat("|w|  ", &r[STAT_GYR],   false, 4, "deg/s");
+}
+
 /* ---------- Trame SIMU ---------- */
 
 static void send_raw(const char *s, int len)
@@ -220,6 +254,7 @@ static void output_thread(void *p1, void *p2, void *p3)
 
 		telemetry_snapshot(&t);
 		update_led(mode, t.state);
+		stats_add(&t);            /* NM4 : la fenêtre se remplit dans tous les modes */
 
 		switch (mode) {
 		case MODE_SIMU: {
@@ -240,8 +275,8 @@ static void output_thread(void *p1, void *p2, void *p3)
 		case MODE_NORMAL:
 		default:
 			if (ticks % NORMAL_TICKS == 0) {
-				/* TODO (rôle A) : ajouter les statistiques sur 30 s (NM4) */
 				print_report(&t, mode);
+				print_stats();    /* NM4 */
 			}
 			break;
 		}
